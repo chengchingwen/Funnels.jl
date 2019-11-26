@@ -1,3 +1,18 @@
+_geti(x, i) = x
+_geti(x::Union{NTuple{N, T}, Vector{T}} where N, i) where T = x[i]
+
+function channel(func::Function; ctype=Any, csize=0, remote=false, pid=myid())
+  if remote
+    return RemoteChannel(Channel(func;ctype=ctype, csize=csize), pid)
+  else
+    return Channel(func;ctype=ctype, csize=csize)
+  end
+end
+
+function channels(n::Int, func::Function; ctype=Any, csize=0, remote=false, pid=myid())
+  Tuple(channel(func;ctype=_geti(ctype, i), csize=_geti(csize, i), remote=_geti(remote, i), pid=_geti(pid, i)) for i = 1:n)
+end
+
 macro channel(_ex...)
   kws = Dict{Symbol, Any}(
     :ctype=>Any,
@@ -47,11 +62,10 @@ macro channel(_ex...)
   chnc = Expr(:do,
               :(Channel(;ctype=$(ctype), csize=$(csize))),
               Expr(:(->),
-                   Expr(:tuple, esc(c)),
-                   esc(ex)
+                   Expr(:tuple, c),
+                   ex
                    )
               )
-
 
   if remote isa Bool
     if remote
@@ -67,25 +81,10 @@ end
 
 islist(ex) = false
 islist(ex::Expr) = ex.head == :tuple || ex.head == :vect
-function listize(name, x, n)
-  if islist(x)
-    if length(x.args) == n
-      return map(arg->arg isa Number ? arg : :($(esc(arg))), x.args)
-    else
-      return Expr(:call, :error, "keyword argument $name length not matched: $(length(x.args)) v.s. $n (expected)")
-    end
-  else
-    if x isa Number
-      return fill(x, n)
-    else
-      return fill(:($(esc(x))), n)
-    end
-  end
-end
 
 macro channels(_ex...)
   kws = Dict{Symbol, Any}(
-    :ctype=>Any,
+    :ctype=>:(Any),
     :csize=>0,
     :remote=>false,
     :pid=>myid(),
@@ -113,44 +112,95 @@ macro channels(_ex...)
     return Expr(:call, :error, "missing keyword argument: n must be specified")
   end
 
-  if n isa Int
+  if n isa Number
+    body = []
+    d = [[] for i = 1:n]
     for (kw, vl) in kws
-      mv = listize(kw, vl, n)
-      if mv isa Expr
-        return mv
+      @show kw, vl
+      if islist(vl)
+        if length(vl.args) != n
+          return Expr(:call, :error, "keyword argument $kw length not matched: $(length(vl.args)) v.s. $n (expected)")
+        else
+          for i = 1:n
+            x = vl.args[i]
+            if x isa Number
+              push!(d[i], :($kw = $x))
+            elseif x isa Symbol
+              push!(d[i], :($kw = _geti($(esc(x)), $i)))
+            else
+              sym = gensym(Symbol(kw, i))
+              push!(body,
+                    Expr(:local,
+                         Expr(:(=),
+                              sym,
+                              :($(esc(x)))
+                              )
+                         )
+                    )
+              push!(d[i], Expr(:(=),
+                               kw,
+                               Expr(:call,
+                                    :_geti,
+                                    sym,
+                                    i)
+                               )
+                    )
+            end
+          end
+        end
       else
-        kws[kw] = mv
+        if vl isa Number
+          for i = 1:n
+            push!(d[i], :($kw = $vl))
+          end
+        elseif vl isa Symbol
+          for i = 1:n
+            push!(d[i], :($kw = _geti($(esc(vl)), $i)))
+          end
+        else
+          sym = gensym(kw)
+          push!(body,
+                Expr(:local,
+                     Expr(:(=),
+                          sym,
+                          :($(esc(vl)))
+                          )
+                     )
+                )
+          for i = 1:n
+            push!(d[i], Expr(:(=),
+                             kw,
+                             Expr(:call,
+                                  :_geti,
+                                  sym,
+                                  i)
+                             )
+                  )
+          end
+        end
       end
     end
 
     chns = []
-    for i in 1:n
-      d = []
-      kws[:ctype][i] != Any && push!(d,  Expr(:(=), :ctype, kws[:ctype][i]))
-      kws[:csize][i] != 0 && push!(d, Expr(:(=), :csize, kws[:csize][i]))
-      kws[:remote][i] && push!(d, Expr(:(=), :remote, kws[:remote][i]))
-      kws[:remote][i] && push!(d, Expr(:(=), :pid, kws[:pid][i]))
-
+    for i = 1:n
       push!(chns,
-            Expr(
-              :macrocall,
-              Symbol("@channel"),
-              Base.LineNumberNode(1),
-              d...,
-              ex
-            )
+            Expr(:macrocall,
+                 Symbol("@channel"),
+                 :(esc(__source__.line)),
+                 d[i]...,
+                 ex
+                 )
             )
     end
-    return Expr(:tuple, chns...)
+    return Expr(:block, body..., Expr(:tuple, chns...))
   else
-    return Expr(:call, :error, "n cannot be known at parsing time")
+    return quote
+      local ctype = $(esc(kws[:ctype]))
+      local csize = $(esc(kws[:csize]))
+      local pid = $(esc(kws[:pid]))
+      local remote = $(esc(kws[:remote]))
+      local func = (_) -> $ex
+      channels($(esc(n)), func; ctype=ctype, csize=csize, pid=pid, remote=remote)
+    end
   end
 end
-
-get_channels(::Type{T}; buffer_size=0) where T = Channel{T}(buffer_size)
-function get_channels(::Type{T}, n; buffer_size=0) where T
-    Tuple(Channel{T}(buffer_size) for i = 1:n)
-end
-
-
-
