@@ -1,9 +1,9 @@
 _geti(x, i) = x
-_geti(x::Union{NTuple{N, T}, Vector{T}} where N, i) where T = x[i]
+_geti(x::Container{T}, i) where T = x[i]
 
 function channel(func::Function; ctype=Any, csize=0, remote=false, pid=myid())
   if remote
-    return RemoteChannel(Channel(func;ctype=ctype, csize=csize), pid)
+    return RemoteChannel(()->Channel(func;ctype=ctype, csize=csize), pid)
   else
     return Channel(func;ctype=ctype, csize=csize)
   end
@@ -59,12 +59,14 @@ macro channel(_ex...)
   c = gensym(:c)
   set_channel_symbol!(ex, c)
 
+  body = Expr(:(->),
+              Expr(:tuple, c),
+              ex
+              )
+
   chnc = Expr(:do,
               :(Channel(;ctype=$(ctype), csize=$(csize))),
-              Expr(:(->),
-                   Expr(:tuple, c),
-                   ex
-                   )
+              :($(esc(body)))
               )
 
   if remote isa Bool
@@ -194,12 +196,34 @@ macro channels(_ex...)
     end
     return Expr(:block, body..., Expr(:tuple, chns...))
   else
+    set_channel_symbol!(x, s) = nothing
+    set_channel_symbol!(ex::Expr, s) =
+      for i = 1:length(ex.args)
+        ms = ex.args[i]
+        if ms isa Symbol && ms === :_
+          ex.args[i] = s
+          return
+        else
+          set_channel_symbol!(ex.args[i], s)
+        end
+      end
+
+    c = gensym(:c)
+
+    ex = (ex isa Expr && ex.head == :block) ? ex : Expr(:block, ex)
+    set_channel_symbol!(ex, c)
+
+    body = Expr(:(->),
+                Expr(:tuple, c),
+                ex
+                )
+
     return quote
       local ctype = $(esc(kws[:ctype]))
       local csize = $(esc(kws[:csize]))
       local pid = $(esc(kws[:pid]))
       local remote = $(esc(kws[:remote]))
-      local func = (_) -> $ex
+      local func = $(esc(body))
       channels($(esc(n)), func; ctype=ctype, csize=csize, pid=pid, remote=remote)
     end
   end
