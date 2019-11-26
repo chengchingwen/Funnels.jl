@@ -2,8 +2,10 @@
 @inline iscall(ex::Expr) = ex.head == :call
 
 @inline islocalclose(e) = e isa InvalidStateException && e.state == :closed
-@inline isremoteclose(e, chn) = e isa RemoteException && e.pid == chn.where && islocalclose(e.captured.ex)
-@inline isclose(e, chn) = islocalclose(e) || isremoteclose(e, chn)
+@inline isremoteclose(e, ::Channel) = false
+@inline isremoteclose(e, chn::RemoteChannel) = e isa RemoteException && e.pid == chn.where && islocalclose(e.captured.ex)
+@inline isclose(e, chn::ChannelLike) = islocalclose(e) || isremoteclose(e, chn)
+@inline isclose(e, chns::Container{<: ChannelLike}) = any(Base.Fix1(isclose, e), chns)
 
 haskw(ex::Expr) = length(ex.args) >= 2 && isa(ex.args[2], Expr) && ex.args[2].head == :parameters
 
@@ -28,9 +30,9 @@ macro try_take!(chn, ex=nothing)
   quote
     let v
       try
-        v = take!($(chn))
+        v = take!($(esc(chn)))
       catch e
-        if isclose(e, $(chn))
+        if isclose(e, $(esc(chn)))
           $(esc(ex))
         else
           rethrow()
@@ -45,9 +47,9 @@ macro try_call!(call::Expr, ex=nothing)
   quote
     let v
       try
-        v = $(call)
+        v = $(esc(call))
       catch e
-        if isclose(e, $(chn))
+        if isclose(e, $(esc(chn)))
           $(esc(ex))
         else
           rethrow()
