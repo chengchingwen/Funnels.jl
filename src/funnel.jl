@@ -36,6 +36,16 @@ function collect!(srcs::Container{RemoteChannel}, dest; ctype=Any, csize=0)
   res
 end
 
+funnel(f::Function, inc::ChannelLike, args...; kwargs...) = funnel(push!, f, inc, args...; kwargs...)
+function funnel(p::typeof(push!), f::Function, inc::ChannelLike, args...; csize=0, ctype=Any, kwargs...)
+  return @channel csize=csize ctype=ctype remote=false begin
+    while true
+      v = @try_take! inc break
+      put!(_, f(v, args...; kwargs...))
+    end
+  end
+end
+
 function funnel(p::typeof(take!), f::Function, inc::ChannelLike, args...; csize=0, ctype=Any, kwargs...)
   return @channel csize=csize ctype=ctype remote=false begin
     while true
@@ -49,13 +59,15 @@ function funnel(p::typeof(put!), f::Function, inc::ChannelLike, args...; csize=0
   return @channel csize=csize ctype=ctype remote=false begin
     while true
       v = @try_take! inc break
-      put!(_, f(v, args...; kwargs...))
+      f(_, v, args...; kwargs...)
     end
   end
 end
 
-stage!(f, rc::RemoteChannel, args...; kwargs...) = stage!(put!, f, rc, args...; kwargs...)
-function stage!(p::Union{typeof(put!), typeof(take!)}, f, rc::RemoteChannel, args...; kwargs...)
+const Phase = Union{typeof(put!), typeof(take!), typeof(push!)}
+
+stage!(f, rc::RemoteChannel, args...; kwargs...) = stage!(push!, f, rc, args...; kwargs...)
+function stage!(p::Phase, f, rc::RemoteChannel, args...; kwargs...)
   rrid = Distributed.remoteref_id(rc)
   remote_do(rc.where, rrid) do id
     lock(Distributed.client_refs) do
@@ -66,8 +78,8 @@ function stage!(p::Union{typeof(put!), typeof(take!)}, f, rc::RemoteChannel, arg
   rc
 end
 
-stage!(f, rcs::Container{RemoteChannel}, args...; kwargs...) = stage!(put!, f, rcs, args...; kwargs...)
-function stage!(p::Union{typeof(put!), typeof(take!)}, f, rcs::Container{RemoteChannel}, args...; kwargs...)
+stage!(f, rcs::Container{RemoteChannel}, args...; kwargs...) = stage!(push!, f, rcs, args...; kwargs...)
+function stage!(p::Phase, f, rcs::Container{RemoteChannel}, args...; kwargs...)
   map(rcs) do rc
     stage!(p, f, rc, args...; kwargs...)
   end

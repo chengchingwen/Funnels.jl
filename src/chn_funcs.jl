@@ -9,7 +9,7 @@ function merges!(cs::Container{<:ChannelLike}, dest=myid(); csize=0, ctype=Any)
   end
 end
 
-function batches!(c::ChannelLike{T}, n=1; csize=0, ctype=Any) where T
+function batches!(c::ChannelLike{T}, n=1) where T
   res = T[]
   sizehint!(res, n)
   for i = 1:n
@@ -22,3 +22,6 @@ function batches!(c::ChannelLike{T}, n=1; csize=0, ctype=Any) where T
   end
   res
 end
+
+unbatches!(c::ChannelLike, vs::Container{T}) where T = foreach(v->put!(c, v), vs)
+

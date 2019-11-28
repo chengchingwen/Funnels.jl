@@ -4,7 +4,7 @@ using Distributed
 
 export @try_take!, @try_call!,
   @channels, @channel
-export separate!, collect!, stage!, merges!, batches!
+export separate!, collect!, stage!, merges!, batches!, unbatches!, funnel
 
 const ChannelLike{T} = Union{Channel{T}, RemoteChannel{Channel{T}}}
 const Container{T} = Union{NTuple{N, T}, Vector{T}} where N
