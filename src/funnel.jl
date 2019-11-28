@@ -1,12 +1,12 @@
-function remotevalue_from_id(id)
-  rv = lock(Distributed.client_refs) do
-    return get(Distributed.PGRP.refs, id, false)
-  end
-  if rv === false
-    throw(ErrorException("Local instance of remote reference not found"))
-  end
-  return rv
-end
+# function remotevalue_from_id(id)
+#   rv = lock(Distributed.client_refs) do
+#     return get(Distributed.PGRP.refs, id, false)
+#   end
+#   if rv === false
+#     throw(ErrorException("Local instance of remote reference not found"))
+#   end
+#   return rv
+# end
 
 separate!(src::Channel, dests; ctype=Any, csize=0) = separate!(RemoteChannel(()->src, myid()), dests; ctype=ctype, csize=csize)
 function separate!(src::RemoteChannel, dests; ctype=Any, csize=0)
@@ -17,26 +17,13 @@ function separate!(src::RemoteChannel, dests; ctype=Any, csize=0)
       put!(_, v)
     end
   end
-  # rcs = Vector{RemoteChannel}(undef, length(dests))
-  # for (i, pid) in enumerate(dests)
-  #   rc = RemoteChannel(
-  #     ()->Channel(; kw...) do c
-  #       while true
-  #         v = @try_take! src break
-  #         put!(c, v)
-  #       end
-  #     end,
-  #     pid)
-  #   rcs[i] = rc
-  # end
-  # rcs
 end
 
 function collect!(srcs::Container{RemoteChannel}, dest; ctype=Any, csize=0)
   res = RemoteChannel(()->Channel{ctype}(csize), dest)
   fins = map(srcs) do rc
     remotecall(rc.where) do
-      chn = remotevalue_from_id(Distributed.remoteref_id(rc)).c
+      chn = channel_from_id(Distributed.remoteref_id(rc))
       for v in chn
         put!(res, v)
       end
@@ -72,20 +59,16 @@ function funnel(p::typeof(put!), f::Function, inc::ChannelLike, args...; csize=0
       put!(_, f(v, args...; kwargs...))
     end
   end
-  # outc = Channel{ctype}(csize)
-  # task = @async while true
-  #   v = @try_take! inc break
-  #   put!(outc, f(v, args...; kwargs...))
-  # end
-  # bind(outc, task)
-  # outc
 end
 
 stage!(f, rc::RemoteChannel, args...; kwargs...) = stage!(put!, f, rc, args...; kwargs...)
 function stage!(p::Union{typeof(put!), typeof(take!)}, f, rc::RemoteChannel, args...; kwargs...)
-  remote_do(rc.where) do
-    rv = remotevalue_from_id(Distributed.remoteref_id(rc))
-    rv.c = funnel(p, f, rv.c, args...; kwargs...)
+  rrid = Distributed.remoteref_id(rc)
+  remote_do(rc.where, rrid) do id
+    lock(Distributed.client_refs) do
+      rv = get(Distributed.PGRP.refs, id, false)
+      rv.c = funnel(p, f, channel_from_id(id), args...; kwargs...)
+    end
   end
   rc
 end
