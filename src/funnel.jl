@@ -43,13 +43,6 @@ function funnel(p::typeof(take!), f::Function, inc::ChannelLike, args...; csize=
       put!(_, v)
     end
   end
-  # outc = Channel{ctype}(csize)
-  # task = @async while true
-  #   v = @try_call! f(inc, args...; kwargs...) break
-  #   put!(outc, v)
-  # end
-  # bind(outc, task)
-  # outc
 end
 
 function funnel(p::typeof(put!), f::Function, inc::ChannelLike, args...; csize=0, ctype=Any, kwargs...)
