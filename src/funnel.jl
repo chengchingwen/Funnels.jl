@@ -1,12 +1,4 @@
-# function remotevalue_from_id(id)
-#   rv = lock(Distributed.client_refs) do
-#     return get(Distributed.PGRP.refs, id, false)
-#   end
-#   if rv === false
-#     throw(ErrorException("Local instance of remote reference not found"))
-#   end
-#   return rv
-# end
+get_channel(rc::RemoteChannel) = Distributed.channel_from_id(Distributed.remoteref_id(rc))
 
 separate!(src::Channel, dests; ctype=Any, csize=0) = separate!(RemoteChannel(()->src, myid()), dests; ctype=ctype, csize=csize)
 function separate!(src::RemoteChannel, dests; ctype=Any, csize=0)
@@ -23,7 +15,7 @@ function collect!(srcs::Container{RemoteChannel}, dest; ctype=Any, csize=0)
   res = RemoteChannel(()->Channel{ctype}(csize), dest)
   fins = map(srcs) do rc
     remotecall(rc.where) do
-      chn = channel_from_id(Distributed.remoteref_id(rc))
+      chn = get_channel(rc)
       for v in chn
         put!(res, v)
       end
@@ -31,7 +23,7 @@ function collect!(srcs::Container{RemoteChannel}, dest; ctype=Any, csize=0)
   end
   remote_do(res.where) do
     task = @async wait.(fins)
-    bind(Distributed.channel_from_id(Distributed.remoteref_id(res)), task)
+    bind(get_channel(res), task)
   end
   res
 end

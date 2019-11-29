@@ -1,5 +1,5 @@
 function merges!(cs::Container{<:ChannelLike}, dest=myid(); csize=0, ctype=Any)
-  return @channel csize=csize ctype=ctype remote=dest!=myid() pid=dest begin
+  return @channel csize=csize ctype=ctype remote=true pid=dest begin
     while true
       v = @try_call! map(cs) do c
         take!(c)
